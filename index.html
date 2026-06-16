@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FZ Smart Ignition</title>
+    <!-- Import Tailwind CSS for styling -->
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-900 text-white flex flex-col items-center justify-center min-h-screen p-6 font-sans">
+
+    <!-- Main UI Panel -->
+    <div class="bg-gray-800 rounded-2xl shadow-2xl p-8 w-full max-w-md border border-gray-700">
+        <h1 class="text-3xl font-bold text-center text-blue-400 mb-2 tracking-wider">FZ IGNITION</h1>
+        
+        <!-- Status Indicator -->
+        <div class="flex items-center justify-center space-x-3 mb-8">
+            <div id="statusDot" class="w-3 h-3 rounded-full bg-red-500"></div>
+            <span id="statusText" class="text-sm font-medium tracking-widest text-gray-300">DISCONNECTED</span>
+        </div>
+
+        <!-- Connection Button Area -->
+        <div id="connectSection">
+            <button id="btnConnect" class="w-full bg-blue-600 hover:bg-blue-500 active:bg-blue-700 text-white font-bold py-4 px-6 rounded-xl transition duration-200 shadow-lg">
+                SCAN & CONNECT
+            </button>
+        </div>
+
+        <!-- Control Buttons Area (Hidden by default) -->
+        <div id="controlSection" class="hidden space-y-4">
+            <button id="btnDisconnect" class="w-full bg-gray-600 hover:bg-gray-500 active:bg-gray-700 text-white font-bold py-3 px-6 rounded-xl transition duration-200 shadow-lg mb-4">
+                DISCONNECT
+            </button>
+            
+            <div class="h-px bg-gray-700 w-full my-6"></div>
+            
+            <button id="btnUnlock" class="w-full bg-green-600 hover:bg-green-500 active:bg-green-700 text-white font-bold py-5 px-6 rounded-xl text-lg transition duration-200 shadow-lg">
+                🔓 UNLOCK ENGINE
+            </button>
+
+            <button id="btnLock" class="w-full bg-red-600 hover:bg-red-500 active:bg-red-700 text-white font-bold py-5 px-6 rounded-xl text-lg transition duration-200 shadow-lg">
+                🔒 LOCK ENGINE
+            </button>
+        </div>
+
+        <!-- Error / Info Console -->
+        <div class="mt-6 h-6 text-center">
+            <span id="errorMsg" class="text-sm font-mono text-red-400"></span>
+        </div>
+    </div>
+    
+    <p class="mt-8 text-gray-500 text-xs text-center">
+        Hardware: ESP32 BLE <br/> Protocol: Web Bluetooth API
+    </p>
+
+    <!-- Application Logic -->
+    <script>
+        const SERVICE_UUID = '12345678-1234-1234-1234-123456789abc';
+        const CHARACTERISTIC_UUID = '87654321-4321-4321-4321-cba987654321';
+
+        let bleDevice = null;
+        let bleCharacteristic = null;
+
+        const statusDot = document.getElementById('statusDot');
+        const statusText = document.getElementById('statusText');
+        const connectSection = document.getElementById('connectSection');
+        const controlSection = document.getElementById('controlSection');
+        const errorMsg = document.getElementById('errorMsg');
+
+        // UI Helpers
+        function updateStatus(text, dotColorClass, pulse = false) {
+            statusText.innerText = text;
+            statusDot.className = `w-3 h-3 rounded-full ${dotColorClass} ${pulse ? 'animate-pulse' : ''}`;
+        }
+
+        function showMessage(msg, isSuccess = false) {
+            errorMsg.innerText = msg;
+            errorMsg.className = `text-sm font-mono ${isSuccess ? 'text-green-400' : 'text-red-400'}`;
+            if (isSuccess) setTimeout(() => { errorMsg.innerText = ''; }, 2000);
+        }
+
+        function toggleUI(isConnected) {
+            connectSection.classList.toggle('hidden', isConnected);
+            controlSection.classList.toggle('hidden', !isConnected);
+        }
+
+        // Bluetooth Logic
+        async function connectBluetooth() {
+            try {
+                errorMsg.innerText = '';
+                updateStatus('SCANNING...', 'bg-yellow-500', true);
+
+                // 1. Scan for the ESP32
+                bleDevice = await navigator.bluetooth.requestDevice({
+                    filters: [{ name: 'FZ_Smart_Ignition' }],
+                    optionalServices: [SERVICE_UUID]
+                });
+
+                updateStatus('CONNECTING...', 'bg-yellow-500', true);
+
+                // 2. Connect to the GATT Server
+                const server = await bleDevice.gatt.connect();
+                const service = await server.getPrimaryService(SERVICE_UUID);
+                bleCharacteristic = await service.getCharacteristic(CHARACTERISTIC_UUID);
+
+                // 3. Success! Update UI
+                updateStatus('CONNECTED TO FZ', 'bg-green-500', true);
+                bleDevice.addEventListener('gattserverdisconnected', onDisconnected);
+                toggleUI(true);
+
+            } catch (error) {
+                console.error(error);
+                onDisconnected();
+                if (error.message.includes('User cancelled')) {
+                    showMessage('Scan cancelled.');
+                } else {
+                    showMessage(error.message);
+                }
+            }
+        }
+
+        function onDisconnected() {
+            updateStatus('DISCONNECTED', 'bg-red-500', false);
+            bleDevice = null;
+            bleCharacteristic = null;
+            toggleUI(false);
+        }
+
+        function disconnectBluetooth() {
+            if (bleDevice && bleDevice.gatt.connected) {
+                bleDevice.gatt.disconnect();
+            }
+        }
+
+        async function sendCommand(command) {
+            if (!bleCharacteristic) {
+                showMessage('Not connected!');
+                return;
+            }
+            try {
+                // Convert text command to exact bytes
+                const encoder = new TextEncoder();
+                const data = encoder.encode(command);
+                await bleCharacteristic.writeValue(data);
+                showMessage(`Sent: ${command}`, true);
+            } catch (error) {
+                console.error(error);
+                showMessage('Failed to send command.');
+            }
+        }
+
+        // Attach Event Listeners to Buttons
+        document.getElementById('btnConnect').addEventListener('click', connectBluetooth);
+        document.getElementById('btnDisconnect').addEventListener('click', disconnectBluetooth);
+        document.getElementById('btnUnlock').addEventListener('click', () => sendCommand('UNLOCK'));
+        document.getElementById('btnLock').addEventListener('click', () => sendCommand('LOCK'));
+    </script>
+</body>
+</html>
